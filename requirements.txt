@@ -1,0 +1,2 @@
+# Floral Realms - Procedural Text RPG
+# No external dependencies required - uses Python standard library only
