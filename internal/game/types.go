@@ -15,10 +15,11 @@ type FlowerType struct {
 
 // PlotState represents a single garden plot.
 type PlotState struct {
-	FlowerType int       // index into FlowerTypes
-	Planted    time.Time // when it was planted
-	Quantity   int       // how many of this flower are growing
-	AutoHarvest bool
+	FlowerType  int       `json:"flower_type"`  // index into all flowers (base + hybrid)
+	Planted     time.Time `json:"planted"`
+	Quantity    int       `json:"quantity"`
+	AutoHarvest bool      `json:"auto_harvest"`
+	IsGreenhouse bool     `json:"is_greenhouse"` // immune to season effects
 }
 
 // Upgrade represents a purchasable upgrade.
@@ -31,20 +32,44 @@ type Upgrade struct {
 	Effect      string  // key for what it does
 }
 
+// LogEntry represents an event in the game log.
+type LogEntry struct {
+	Time    time.Time `json:"time"`
+	Message string    `json:"message"`
+	Color   string    `json:"color"` // hex color for display
+}
+
 // GameState holds the entire persistent game state.
 type GameState struct {
-	Petals       float64     `json:"petals"`
-	TotalPetals  float64     `json:"total_petals"`  // lifetime petals earned
-	Seeds        float64     `json:"seeds"`
-	Nectar       float64     `json:"nectar"`         // prestige currency
-	Plots        []PlotState `json:"plots"`
-	Unlocked     []bool      `json:"unlocked"`       // which flower types are unlocked
-	UpgradeLevels map[string]int `json:"upgrade_levels"`
-	PrestigeCount int        `json:"prestige_count"`
-	LastTick     time.Time   `json:"last_tick"`
-	TotalHarvests int64      `json:"total_harvests"`
-	PlayTime     time.Duration `json:"play_time"`
-	CreatedAt    time.Time   `json:"created_at"`
+	// Resources
+	Petals      float64 `json:"petals"`
+	TotalPetals float64 `json:"total_petals"`
+	Seeds       float64 `json:"seeds"`
+	Nectar      float64 `json:"nectar"`  // prestige 1 currency
+	Essence     float64 `json:"essence"` // prestige 2 currency
+
+	// Garden
+	Plots   []PlotState `json:"plots"`
+	Unlocked []bool     `json:"unlocked"` // base flowers + hybrids
+
+	// Upgrades
+	UpgradeLevels  map[string]int `json:"upgrade_levels"`
+	EssenceUpgrades map[string]int `json:"essence_upgrades"` // persistent across prestige 1
+
+	// Progression
+	PrestigeCount    int   `json:"prestige_count"`
+	Prestige2Count   int   `json:"prestige2_count"`
+	TotalHarvests    int64 `json:"total_harvests"`
+	DiscoveredHybrids []int `json:"discovered_hybrids"`
+
+	// Timing
+	LastTick  time.Time     `json:"last_tick"`
+	PlayTime  time.Duration `json:"play_time"`
+	CreatedAt time.Time     `json:"created_at"`
+	LastSave  time.Time     `json:"last_save"`
+
+	// Event log (not persisted — rebuilt on load)
+	Log []LogEntry `json:"-"`
 }
 
 var FlowerTypes = []FlowerType{
@@ -65,11 +90,30 @@ var Upgrades = []Upgrade{
 	{Name: "Seed Pouch", Description: "Earn seeds from harvests", BaseCost: 50, CostScale: 2.0, MaxLevel: 10, Effect: "seed_gen"},
 	{Name: "Petal Multiplier", Description: "x1.5 petal yield", BaseCost: 200, CostScale: 3.0, MaxLevel: 5, Effect: "petal_mult"},
 	{Name: "Compost Bin", Description: "15% chance of double harvest", BaseCost: 75, CostScale: 2.2, MaxLevel: 10, Effect: "double_chance"},
+	{Name: "Pollination", Description: "+25% hybrid discovery chance", BaseCost: 150, CostScale: 2.0, MaxLevel: 5, Effect: "pollination"},
+}
+
+// EssenceUpgradeInfo defines upgrades bought with Essence (prestige 2 currency).
+type EssenceUpgradeInfo struct {
+	Name        string
+	Description string
+	Cost        float64
+	MaxLevel    int
+	Effect      string
+}
+
+var EssenceUpgrades = []EssenceUpgradeInfo{
+	{Name: "Greenhouse", Description: "One plot ignores season penalties", Cost: 5, MaxLevel: 5, Effect: "greenhouse"},
+	{Name: "Ancient Seeds", Description: "Start each run with 50 seeds", Cost: 3, MaxLevel: 10, Effect: "start_seeds"},
+	{Name: "Eternal Bloom", Description: "+25% base growth speed per level", Cost: 8, MaxLevel: 5, Effect: "eternal_growth"},
+	{Name: "Soul of the Garden", Description: "+50% petal yield per level", Cost: 10, MaxLevel: 5, Effect: "soul_yield"},
+	{Name: "Memory of Flowers", Description: "Keep 1 flower unlock per level on prestige", Cost: 15, MaxLevel: 3, Effect: "memory"},
 }
 
 func NewGameState() *GameState {
 	now := time.Now()
-	unlocked := make([]bool, len(FlowerTypes))
+	totalFlowers := len(FlowerTypes) + len(HybridFlowers)
+	unlocked := make([]bool, totalFlowers)
 	unlocked[0] = true // Daisies are free
 
 	plots := []PlotState{
@@ -78,13 +122,28 @@ func NewGameState() *GameState {
 	}
 
 	return &GameState{
-		Petals:        0,
-		Seeds:         0,
-		Nectar:        0,
-		Plots:         plots,
-		Unlocked:      unlocked,
-		UpgradeLevels: make(map[string]int),
-		LastTick:      now,
-		CreatedAt:     now,
+		Petals:          0,
+		Seeds:           0,
+		Nectar:          0,
+		Essence:         0,
+		Plots:           plots,
+		Unlocked:        unlocked,
+		UpgradeLevels:   make(map[string]int),
+		EssenceUpgrades: make(map[string]int),
+		LastTick:        now,
+		CreatedAt:       now,
+		Log:             []LogEntry{},
+	}
+}
+
+// AddLog adds an event to the game log, keeping max 50 entries.
+func (g *GameState) AddLog(msg, color string) {
+	g.Log = append(g.Log, LogEntry{
+		Time:    time.Now(),
+		Message: msg,
+		Color:   color,
+	})
+	if len(g.Log) > 50 {
+		g.Log = g.Log[len(g.Log)-50:]
 	}
 }
