@@ -77,6 +77,12 @@ func (g *GameState) EffectiveGrowTimeForPlot(plotIdx int) time.Duration {
 		}
 	}
 
+	// Event growth modifier
+	eventMult := g.EventGrowthMult()
+	if eventMult > 0 {
+		ms /= eventMult
+	}
+
 	return time.Duration(ms) * time.Millisecond
 }
 
@@ -115,6 +121,9 @@ func (g *GameState) EffectiveYield(plotIdx int) float64 {
 		yield *= g.SeasonYieldMult(tier)
 	}
 
+	// Event yield modifier
+	yield *= g.EventYieldMult()
+
 	return yield
 }
 
@@ -127,7 +136,7 @@ func (g *GameState) Harvest(plotIdx int) (petals float64, seeds float64, doubled
 	}
 
 	petals = g.EffectiveYield(plotIdx)
-	seeds = g.SeedGenRate()
+	seeds = g.SeedGenRate() * g.EventSeedMult()
 
 	if rand.Float64() < g.DoubleChance() {
 		petals *= 2
@@ -139,6 +148,11 @@ func (g *GameState) Harvest(plotIdx int) (petals float64, seeds float64, doubled
 	g.TotalPetals += petals
 	g.Seeds += seeds
 	g.TotalHarvests++
+
+	// Track harvests during events for achievements
+	if g.IsEventActive() && g.EventHarvests != nil {
+		g.EventHarvests[string(g.ActiveEvent.Type)] = true
+	}
 
 	// Check for hybrid breeding
 	hybridIdx = g.CheckHybridBreeding(plotIdx)
@@ -351,6 +365,8 @@ func (g *GameState) Prestige() float64 {
 	g.Seeds = startSeeds
 	g.UpgradeLevels = make(map[string]int)
 	g.Unlocked = keptUnlocks
+	g.ActiveEvent = nil
+	g.ComboCount = 0
 
 	now := time.Now()
 	g.Plots = []PlotState{
@@ -394,6 +410,8 @@ func (g *GameState) Prestige2() float64 {
 	g.Seeds = 0
 	g.UpgradeLevels = make(map[string]int)
 	g.DiscoveredHybrids = nil
+	g.ActiveEvent = nil
+	g.ComboCount = 0
 
 	totalFlowers := len(FlowerTypes) + len(HybridFlowers)
 	g.Unlocked = make([]bool, totalFlowers)
@@ -406,6 +424,39 @@ func (g *GameState) Prestige2() float64 {
 	}
 
 	return essence
+}
+
+// ComboMultiplier returns the petal multiplier from the current combo streak.
+// Combo gives diminishing returns: 1.0 + log2(combo) * 0.1
+func (g *GameState) ComboMultiplier() float64 {
+	if g.ComboCount <= 1 {
+		return 1.0
+	}
+	return 1.0 + math.Log2(float64(g.ComboCount))*0.15
+}
+
+// RegisterManualHarvest updates the combo counter for manual harvests.
+// Must be called BEFORE Harvest() for the combo to apply to the current harvest.
+func (g *GameState) RegisterManualHarvest() {
+	now := time.Now()
+	// Combo window: 3 seconds between harvests
+	if !g.LastHarvestAt.IsZero() && now.Sub(g.LastHarvestAt) <= 3*time.Second {
+		g.ComboCount++
+	} else {
+		g.ComboCount = 1
+	}
+	g.LastHarvestAt = now
+	if g.ComboCount > g.BestCombo {
+		g.BestCombo = g.ComboCount
+	}
+}
+
+// ComboActive returns whether the combo timer is still ticking.
+func (g *GameState) ComboActive() bool {
+	if g.ComboCount <= 0 || g.LastHarvestAt.IsZero() {
+		return false
+	}
+	return time.Since(g.LastHarvestAt) <= 3*time.Second
 }
 
 // PetalsPerSecond estimates current petal generation rate.

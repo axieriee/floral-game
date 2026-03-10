@@ -68,6 +68,18 @@ type GameState struct {
 	CreatedAt time.Time     `json:"created_at"`
 	LastSave  time.Time     `json:"last_save"`
 
+	// Achievements
+	CompletedAchievements map[AchievementID]bool `json:"completed_achievements"`
+
+	// Garden events
+	ActiveEvent    *GardenEvent       `json:"active_event"`
+	EventHarvests  map[string]bool    `json:"event_harvests"` // tracks which event types player harvested during
+
+	// Combo harvest
+	ComboCount    int       `json:"-"` // current combo streak
+	BestCombo     int       `json:"best_combo"`
+	LastHarvestAt time.Time `json:"-"` // last manual harvest time
+
 	// Event log (not persisted — rebuilt on load)
 	Log []LogEntry `json:"-"`
 }
@@ -122,17 +134,19 @@ func NewGameState() *GameState {
 	}
 
 	return &GameState{
-		Petals:          0,
-		Seeds:           0,
-		Nectar:          0,
-		Essence:         0,
-		Plots:           plots,
-		Unlocked:        unlocked,
-		UpgradeLevels:   make(map[string]int),
-		EssenceUpgrades: make(map[string]int),
-		LastTick:        now,
-		CreatedAt:       now,
-		Log:             []LogEntry{},
+		Petals:                0,
+		Seeds:                 0,
+		Nectar:                0,
+		Essence:               0,
+		Plots:                 plots,
+		Unlocked:              unlocked,
+		UpgradeLevels:         make(map[string]int),
+		EssenceUpgrades:       make(map[string]int),
+		CompletedAchievements: make(map[AchievementID]bool),
+		EventHarvests:         make(map[string]bool),
+		LastTick:              now,
+		CreatedAt:             now,
+		Log:                   []LogEntry{},
 	}
 }
 

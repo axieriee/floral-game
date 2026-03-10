@@ -17,9 +17,10 @@ const (
 	tabFlowers
 	tabBreeding
 	tabPrestige
+	tabAchievements
 )
 
-var tabNames = []string{"Garden", "Upgrades", "Flowers", "Breeding", "Prestige"}
+var tabNames = []string{"Garden", "Upgrades", "Flowers", "Breeding", "Prestige", "Achievements"}
 
 type tickMsg time.Time
 
@@ -50,6 +51,12 @@ func NewModel() Model {
 		}
 		if state.UpgradeLevels == nil {
 			state.UpgradeLevels = make(map[string]int)
+		}
+		if state.CompletedAchievements == nil {
+			state.CompletedAchievements = make(map[game.AchievementID]bool)
+		}
+		if state.EventHarvests == nil {
+			state.EventHarvests = make(map[string]bool)
 		}
 		// Ensure unlocked slice is big enough for hybrids
 		totalFlowers := len(game.FlowerTypes) + len(game.HybridFlowers)
@@ -105,6 +112,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.message = fmt.Sprintf("%s %s has arrived! %s", s.Emoji, s.Name, s.Special)
 			m.messageTime = time.Now()
 			m.lastSeason = currentSeason
+		}
+
+		// Try to trigger random garden events
+		if evt := m.state.TryTriggerEvent(); evt != nil {
+			m.state.AddLog(fmt.Sprintf("%s %s — %s", evt.Emoji, evt.Name, evt.Description), "#FFD700")
+			m.message = fmt.Sprintf("%s %s — %s", evt.Emoji, evt.Name, evt.Description)
+			m.messageTime = time.Now()
+		}
+
+		// Check achievements
+		newAch := m.state.CheckAchievements()
+		for _, a := range newAch {
+			m.message = fmt.Sprintf("%s Achievement Unlocked: %s! (+%.0f %s)",
+				a.Emoji, a.Name, a.Reward, a.RewardType)
+			m.messageTime = time.Now()
 		}
 
 		// Auto-save every 30 seconds
@@ -165,6 +187,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.activeTab = tabPrestige
 			m.cursor = 0
 			return m, nil
+		case "6":
+			m.activeTab = tabAchievements
+			m.cursor = 0
+			return m, nil
 		}
 
 		// Tab-specific key handling
@@ -179,6 +205,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateBreeding(msg)
 		case tabPrestige:
 			return m.updatePrestige(msg)
+		case tabAchievements:
+			return m.updateAchievements(msg)
 		}
 	}
 	return m, nil
@@ -194,13 +222,28 @@ func (m Model) updateGarden(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "enter", " ":
 		if m.cursor < len(m.state.Plots) {
 			if m.state.IsReady(m.cursor) {
+				// Register combo before harvest so multiplier applies
+				m.state.RegisterManualHarvest()
+				comboMult := m.state.ComboMultiplier()
+
 				petals, seeds, doubled, hybridIdx := m.state.Harvest(m.cursor)
+				// Apply combo multiplier to manual harvests
+				if comboMult > 1.0 {
+					bonus := petals * (comboMult - 1.0)
+					petals += bonus
+					m.state.Petals += bonus
+					m.state.TotalPetals += bonus
+				}
+
 				msg := fmt.Sprintf("+%s petals", formatNumber(petals))
 				if seeds > 0 {
 					msg += fmt.Sprintf(", +%.1f seeds", seeds)
 				}
 				if doubled {
 					msg += " (DOUBLE!)"
+				}
+				if m.state.ComboCount > 1 {
+					msg += fmt.Sprintf(" [%dx COMBO! %.0f%%]", m.state.ComboCount, (comboMult-1)*100)
 				}
 				if hybridIdx >= 0 {
 					h := game.HybridFlowers[hybridIdx]
@@ -319,6 +362,15 @@ func (m Model) updateBreeding(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.cursor = maxCursor
 	}
 	// Breeding tab is informational — no enter action needed
+	return m, nil
+}
+
+func (m Model) updateAchievements(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	maxCursor := len(game.Achievements) - 1
+	if m.cursor > maxCursor {
+		m.cursor = maxCursor
+	}
+	// Read-only tab
 	return m, nil
 }
 

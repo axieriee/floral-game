@@ -123,6 +123,21 @@ func (m Model) View() string {
 	b.WriteString(m.renderTabs())
 	b.WriteString("\n\n")
 
+	// Active event banner
+	if m.state.IsEventActive() {
+		b.WriteString(m.renderEventBanner())
+		b.WriteString("\n")
+	}
+
+	// Combo indicator
+	if m.state.ComboActive() && m.state.ComboCount > 1 {
+		comboStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FF4500"))
+		comboMult := m.state.ComboMultiplier()
+		b.WriteString(comboStyle.Render(
+			fmt.Sprintf("  COMBO x%d (%.0f%% bonus)  ", m.state.ComboCount, (comboMult-1)*100)))
+		b.WriteString("\n")
+	}
+
 	// Content
 	switch m.activeTab {
 	case tabGarden:
@@ -135,6 +150,8 @@ func (m Model) View() string {
 		b.WriteString(m.renderBreeding())
 	case tabPrestige:
 		b.WriteString(m.renderPrestige())
+	case tabAchievements:
+		b.WriteString(m.renderAchievements())
 	}
 
 	// Event log (bottom right area)
@@ -721,6 +738,75 @@ func (m Model) renderPrestige() string {
 	return m.boxStyle().Render(strings.Join(lines, "\n"))
 }
 
+func (m Model) renderEventBanner() string {
+	if !m.state.IsEventActive() {
+		return ""
+	}
+	info := game.GetEventInfo(m.state.ActiveEvent.Type)
+	remaining := m.state.EventTimeRemaining()
+
+	bgColor := lipgloss.Color("#2F4F2F")
+	fgColor := lipgloss.Color("#00FF7F")
+	if !info.Positive {
+		bgColor = lipgloss.Color("#4F2F2F")
+		fgColor = lipgloss.Color("#FF6347")
+	}
+
+	bannerStyle := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(fgColor).
+		Background(bgColor).
+		Padding(0, 2)
+
+	return bannerStyle.Render(fmt.Sprintf(" %s %s — %s [%s] ",
+		info.Emoji, info.Name, info.Description, formatDuration(remaining)))
+}
+
+func (m Model) renderAchievements() string {
+	var lines []string
+	p := m.palette()
+
+	completed, total := game.AchievementProgress(m.state)
+	header := fmt.Sprintf("🏆 Achievements (%d/%d)", completed, total)
+	lines = append(lines, lipgloss.NewStyle().Bold(true).Foreground(p.primary).Render(header))
+	lines = append(lines, "")
+
+	// Show best combo
+	if m.state.BestCombo > 1 {
+		lines = append(lines, lipgloss.NewStyle().Foreground(lipgloss.Color("#FF4500")).Render(
+			fmt.Sprintf(" Best combo: %dx", m.state.BestCombo)))
+		lines = append(lines, "")
+	}
+
+	for i, a := range game.Achievements {
+		done := m.state.CompletedAchievements[a.ID]
+
+		var line string
+		if done {
+			rewardStr := lipgloss.NewStyle().Foreground(lipgloss.Color("#AAAAAA")).Render(
+				fmt.Sprintf("+%.0f %s", a.Reward, a.RewardType))
+			line = fmt.Sprintf(" %s %s  %s  %s",
+				a.Emoji,
+				lipgloss.NewStyle().Foreground(nectarColor).Render(a.Name),
+				lipgloss.NewStyle().Foreground(dimColor).Render(a.Description),
+				rewardStr)
+		} else if a.Hidden {
+			line = lipgloss.NewStyle().Foreground(dimColor).Render(" 🔮 ???  Hidden achievement")
+		} else {
+			line = fmt.Sprintf(" ○ %s  %s",
+				lipgloss.NewStyle().Foreground(lipgloss.Color("#888888")).Render(a.Name),
+				lipgloss.NewStyle().Foreground(dimColor).Render(a.Description))
+		}
+
+		if i == m.cursor {
+			line = selectedStyle.Render(line)
+		}
+		lines = append(lines, line)
+	}
+
+	return m.boxStyle().Render(strings.Join(lines, "\n"))
+}
+
 func (m Model) renderLog() string {
 	if len(m.state.Log) == 0 {
 		return ""
@@ -761,6 +847,8 @@ func (m Model) renderHelp() string {
 		help = "↑/↓ browse  •  TAB next tab  •  s save  •  q quit"
 	case tabPrestige:
 		help = "↑/↓ select layer  •  ENTER prestige/transcend  •  TAB next tab  •  s save  •  q quit"
+	case tabAchievements:
+		help = "↑/↓ browse  •  TAB next tab  •  s save  •  q quit"
 	}
 	return helpStyle.Render(help)
 }
